@@ -83,7 +83,7 @@ nulltransaction :: Transaction
 nulltransaction = Transaction {
                     tindex=0,
                     tsourcepos=nullsourcepos,
-                    ttimestamp=Nothing,
+                    tdatetime=Nothing,
                     tdate=nulldate,
                     tdate2=Nothing,
                     tstatus=Unmarked,

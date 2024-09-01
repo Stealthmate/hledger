@@ -478,7 +478,7 @@ data Transaction = Transaction {
       tindex                   :: Integer,   -- ^ this transaction's 1-based position in the transaction stream, or 0 when not available
       tprecedingcomment        :: Text,      -- ^ any comment lines immediately preceding this transaction
       tsourcepos               :: (SourcePos, SourcePos),  -- ^ the file position where the date starts, and where the last posting ends
-      ttimestamp               :: Maybe POSIXTime,
+      tdatetime                :: Maybe POSIXTime,
       tdate                    :: Day,
       tdate2                   :: Maybe Day,
       tstatus                  :: Status,

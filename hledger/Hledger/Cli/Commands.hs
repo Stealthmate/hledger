@@ -652,7 +652,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 01 01,
              tdate2=Nothing,
              tstatus=Unmarked,
@@ -670,7 +670,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 02 01,
              tdate2=Nothing,
              tstatus=Unmarked,
@@ -688,7 +688,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 01 02,
              tdate2=Nothing,
              tstatus=Unmarked,
@@ -706,7 +706,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 01 03,
              tdate2=Nothing,
              tstatus=Unmarked,
@@ -724,7 +724,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 01 03,
              tdate2=Nothing,
              tstatus=Unmarked,
@@ -742,7 +742,7 @@ journal7 = nulljournal {jtxns =
            txnTieKnot Transaction {
              tindex=0,
              tsourcepos=nullsourcepos,
-             ttimestamp=Nothing,
+             tdatetime=Nothing,
              tdate=fromGregorian 2007 01 03,
              tdate2=Nothing,
              tstatus=Unmarked,
