@@ -806,7 +806,7 @@ transactionp = do
   postings <- postingsp (Just year)
   endpos <- getSourcePos
   let sourcepos = (startpos, endpos)
-  return $ txnTieKnot $ Transaction 0 "" sourcepos date edate status code description comment tags postings
+  return $ txnTieKnot $ Transaction 0 "" sourcepos Nothing date edate status code description comment tags postings
 
 --- *** postings
 

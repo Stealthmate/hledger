@@ -351,6 +351,7 @@ journalFinalise iopts@InputOpts{auto_,balancingopts_,infer_costs_,infer_equity_,
       <&> journalPostingsAddAccountTags                  -- Add account tags to postings, so they can be matched by auto postings.
       >>= journalMarkRedundantCosts                      -- Mark redundant costs, to help journalBalanceTransactions ignore them.
                                                          -- (Later, journalInferEquityFromCosts will do a similar pass, adding missing equity postings.)
+      >>= journalSetTransactionDatetimes -- Compute and set tdatetime's based on surrounding transactions
 
       >>= (if auto_ && not (null $ jtxnmodifiers pj)
             then journalAddAutoPostings verbose_tags_ _ioDay balancingopts_  -- Add auto postings if enabled, and account tags if needed. Does preliminary transaction balancing.
