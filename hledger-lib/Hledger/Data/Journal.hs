@@ -1012,27 +1012,45 @@ journalMarkRedundantCosts j = do
   where conversionaccts = journalConversionAccounts j
 
 journalSetTransactionDatetimes :: Journal -> Either String Journal
-journalSetTransactionDatetimes j = do
-  ts <- foldM setDateTime [] $ jtxns j
-  return j{jtxns=ts}
+journalSetTransactionDatetimes j@Journal{jtxns=[]} = Right j
+journalSetTransactionDatetimes j@Journal{jtxns=txns} = do
+  allWithDatetime <- foldM setDateTime [] . sortBy cmpDate $ txns
+  return j{jtxns=sortBy cmpIndex allWithDatetime}
   where
+    cmpDate t1 t2
+      | compare (tdate t1) (tdate t2) == EQ =
+        case (tdatetime t1, tdatetime t2) of
+          (Just dt1, Just dt2) -> compare dt1 dt2
+          (_, _) -> compare (tindex t1) (tindex t2)
+      | otherwise = compare (tdate t1) (tdate t2)
+    cmpIndex t1 t2 =
+      let keyOf = tindex
+      in compare (keyOf t1) (keyOf t2)
+
     setDateTime :: [Transaction] -> Transaction -> Either String [Transaction]
-    setDateTime txns tn@Transaction{tdatetime = Just _} = Right $ txns ++ [tn]
-    setDateTime [] tn@Transaction{tdate=d} = Right [tn{tdatetime=Just . zeroTime $ d}]
-    setDateTime txns tn@Transaction{tdate=d} = do
-      lastTxnDatetime <- case tdatetime $ last txns of
+    -- If the current transation has a tdatetime, we leave it as it is.
+    setDateTime txnsRest txn@Transaction{tdatetime = Just _} = Right $ txn:txnsRest
+    -- All patterns below assume that tdatetime is empty.
+
+    -- If the current transaction comes first chronologically,
+    -- we set tdatetime to the start of the day.
+    setDateTime [] txn@Transaction{tdate = d} = Right (txn{tdatetime = Just . zeroTime $ d}:[])
+    setDateTime (lastTxn:txnsRest) txn = do
+      lastTxnDatetime <- case tdatetime lastTxn of
         Nothing -> Left "Empty tdatetime while folding journal. This should never happen."
         Just dt -> Right dt
       let lastTxnTime = diffTimeToPicoseconds . utctDayTime $ lastTxnDatetime
-          endOfDay = 86400 * 1000000000;
-      earliestNextTime <- if lastTxnTime == endOfDay
-        then Left "Previous transaction was at the end of the day \
+          nextTxnTime = lastTxnTime + 1000000000
+      earliestNextTime <- if
+        nextTxnTime < endOfDay then Right nextTxnTime
+        else Left "Previous transaction was at the end of the day \
                   \and the current transaction does not specify a \
                   \time of day, so it's impossible to deduce a valid timestamp."
-        else Right $ lastTxnTime + 1000000000 -- pick the next millisecond
-      Right $ txns ++ [tn{tdatetime=Just . UTCTime d . picosecondsToDiffTime $ earliestNextTime}]
+      Right $ txn{tdatetime=Just . UTCTime (tdate txn) . picosecondsToDiffTime $ earliestNextTime}:lastTxn:txnsRest
     zeroTime :: Day -> UTCTime
     zeroTime d = UTCTime d . secondsToDiffTime $ 0
+
+    endOfDay = 86400 * 1000000000
 
 -- -- | Get this journal's unique, display-preference-canonicalised commodities, by symbol.
 -- journalCanonicalCommodities :: Journal -> M.Map String CommoditySymbol
@@ -1385,5 +1403,36 @@ tests_Journal = testGroup "Journal" [
                               }
               ]
       }
-    @?= (DateSpan (Just $ Exact $ fromGregorian 2014 1 10) (Just $ Exact $ fromGregorian 2014 10 11))
+    @?= (DateSpan (Just $ Exact $ fromGregorian 2014 1 10) (Just $ Exact $ fromGregorian 2014 10 11)),
+
+   testCase "journalSetTransactionDatetimes sets correct tdatetime for single transaction" $ do
+    let txn1 = nulltransaction{tdate = fromGregorian 2024 02 01}
+        jin = nulljournal{jtxns = [txn1]}
+    txnsOut <- case fmap jtxns (journalSetTransactionDatetimes jin) of
+      Right x -> pure x
+      Left _ -> assertFailure "Must be Right."
+
+    txnsOut @=? [txn1{tdatetime=Just $ UTCTime (tdate txn1) (secondsToDiffTime 0)}],
+
+   testCase "journalSetTransactionDatetimes sets correct tdatetime when already exists" $ do
+    let txn1 = nulltransaction{tdate = fromGregorian 2024 02 01, tdatetime = Just $ UTCTime (fromGregorian 2024 02 01) (secondsToDiffTime 0)}
+        jin = nulljournal{jtxns = [txn1]}
+    txnsOut <- case fmap jtxns (journalSetTransactionDatetimes jin) of
+      Right x -> pure x
+      Left _ -> assertFailure "Must be Right."
+
+    txnsOut @=? [txn1],
+
+   testCase "journalSetTransactionDatetimes sets correct tdatetime when nothing" $ do
+    let txn1 = nulltransaction{tindex=1, tdate=fromGregorian 2024 02 01}
+        txn2 = nulltransaction{tindex=2, tdate=fromGregorian 2024 02 01}
+        jin = nulljournal{jtxns = [txn1, txn2]}
+    txnsOut <- case fmap jtxns (journalSetTransactionDatetimes jin) of
+      Right x -> pure x
+      Left _ -> assertFailure "Must be Right."
+
+    txnsOut @=? [
+        txn1{tdatetime=Just $ UTCTime (tdate txn1) (picosecondsToDiffTime 0)},
+        txn2{tdatetime=Just $ UTCTime (tdate txn2) (picosecondsToDiffTime 1000000000)}
+      ]
   ]
