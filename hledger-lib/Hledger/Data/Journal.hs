@@ -32,6 +32,7 @@ module Hledger.Data.Journal (
   journalInferEquityFromCosts,
   journalInferCostsFromEquity,
   journalMarkRedundantCosts,
+  journalSetTransactionDatetimes,
   journalReverse,
   journalSetLastReadTime,
   journalRenumberAccountDeclarations,
@@ -117,6 +118,7 @@ module Hledger.Data.Journal (
 where
 
 import Control.Applicative ((<|>))
+import Control.Monad (foldM)
 import Control.Monad.Except (ExceptT(..))
 import Control.Monad.State.Strict (StateT)
 import Data.Char (toUpper, isDigit)
@@ -132,6 +134,7 @@ import qualified Data.Text as T
 import Safe (headMay, headDef, maximumMay, minimumMay, lastDef)
 import Data.Time.Calendar (Day, addDays, fromGregorian, diffDays)
 import Data.Time.Clock.POSIX (POSIXTime)
+import Data.Time.Clock (UTCTime(UTCTime), utctDayTime, secondsToDiffTime, diffTimeToPicoseconds, picosecondsToDiffTime)
 import Data.Tree (Tree(..), flatten)
 import Text.Printf (printf)
 import Text.Megaparsec (ParsecT)
@@ -1007,6 +1010,29 @@ journalMarkRedundantCosts j = do
   ts <- mapM (transactionInferCostsFromEquity True conversionaccts) $ jtxns j
   return j{jtxns=ts}
   where conversionaccts = journalConversionAccounts j
+
+journalSetTransactionDatetimes :: Journal -> Either String Journal
+journalSetTransactionDatetimes j = do
+  ts <- foldM setDateTime [] $ jtxns j
+  return j{jtxns=ts}
+  where
+    setDateTime :: [Transaction] -> Transaction -> Either String [Transaction]
+    setDateTime txns tn@Transaction{tdatetime = Just _} = Right $ txns ++ [tn]
+    setDateTime [] tn@Transaction{tdate=d} = Right [tn{tdatetime=Just . zeroTime $ d}]
+    setDateTime txns tn@Transaction{tdate=d} = do
+      lastTxnDatetime <- case tdatetime $ last txns of
+        Nothing -> Left "Empty tdatetime while folding journal. This should never happen."
+        Just dt -> Right dt
+      let lastTxnTime = diffTimeToPicoseconds . utctDayTime $ lastTxnDatetime
+          endOfDay = 86400 * 1000000000;
+      earliestNextTime <- if lastTxnTime == endOfDay
+        then Left "Previous transaction was at the end of the day \
+                  \and the current transaction does not specify a \
+                  \time of day, so it's impossible to deduce a valid timestamp."
+        else Right $ lastTxnTime + 1000000000 -- pick the next millisecond
+      Right $ txns ++ [tn{tdatetime=Just . UTCTime d . picosecondsToDiffTime $ earliestNextTime}]
+    zeroTime :: Day -> UTCTime
+    zeroTime d = UTCTime d . secondsToDiffTime $ 0
 
 -- -- | Get this journal's unique, display-preference-canonicalised commodities, by symbol.
 -- journalCanonicalCommodities :: Journal -> M.Map String CommoditySymbol
