@@ -188,14 +188,20 @@ spansSpan :: [DateSpan] -> DateSpan
 spansSpan spans = DateSpan (spanStartDate =<< headMay spans) (spanEndDate =<< lastMay spans)
 
 -- | Split a DateSpan into consecutive exact spans of the specified Interval.
--- If the first argument is true and the interval is Weeks, Months, Quarters or Years,
--- the start date will be adjusted backward if needed to nearest natural interval boundary
--- (a monday, first of month, first of quarter or first of year).
 -- If no interval is specified, the original span is returned.
 -- If the original span is the null date span, ie unbounded, the null date span is returned.
 -- If the original span is empty, eg if the end date is <= the start date, no spans are returned.
 --
--- ==== Examples:
+-- ==== Date adjustment
+-- Some intervals respect the "adjust" flag (years, quarters, months, weeks, every Nth weekday
+-- of month seem to be the ones that need it). This will move the start date earlier, if needed,
+-- to the previous natural interval boundary (first of year, first of quarter, first of month,
+-- monday, previous Nth weekday of month). Related: #1982 #2218
+--
+-- The end date is always moved later if needed to the next natural interval boundary,
+-- so that the last period is the same length as the others.
+--
+-- ==== Examples
 -- >>> let t i y1 m1 d1 y2 m2 d2 = splitSpan True i $ DateSpan (Just $ Flex $ fromGregorian y1 m1 d1) (Just $ Flex $ fromGregorian y2 m2 d2)
 -- >>> t NoInterval 2008 01 01 2009 01 01
 -- [DateSpan 2008]
@@ -215,35 +221,35 @@ spansSpan spans = DateSpan (spanStartDate =<< headMay spans) (spanEndDate =<< la
 -- [DateSpan 2007-W01,DateSpan 2008-W02,DateSpan 2008-W03]
 -- >>> t (Weeks 2) 2008 01 01 2008 01 15
 -- [DateSpan 2007-12-31..2008-01-13,DateSpan 2008-01-14..2008-01-27]
--- >>> t (DayOfMonth 2) 2008 01 01 2008 04 01
--- [DateSpan 2007-12-02..2008-01-01,DateSpan 2008-01-02..2008-02-01,DateSpan 2008-02-02..2008-03-01,DateSpan 2008-03-02..2008-04-01]
--- >>> t (WeekdayOfMonth 2 4) 2011 01 01 2011 02 15
+-- >>> t (MonthDay 2) 2008 01 01 2008   04 01
+-- [DateSpan 2008-01-02..2008-02-01,DateSpan 2008-02-02..2008-03-01,DateSpan 2008-03-02..2008-04-01]
+-- >>> t (NthWeekdayOfMonth 2 4) 2011 01 01 2011 02 15
 -- [DateSpan 2010-12-09..2011-01-12,DateSpan 2011-01-13..2011-02-09,DateSpan 2011-02-10..2011-03-09]
 -- >>> t (DaysOfWeek [2]) 2011 01 01 2011 01 15
 -- [DateSpan 2010-12-28..2011-01-03,DateSpan 2011-01-04..2011-01-10,DateSpan 2011-01-11..2011-01-17]
--- >>> t (DayOfYear 11 29) 2011 10 01 2011 10 15
--- [DateSpan 2010-11-29..2011-11-28]
--- >>> t (DayOfYear 11 29) 2011 12 01 2012 12 15
--- [DateSpan 2011-11-29..2012-11-28,DateSpan 2012-11-29..2013-11-28]
+-- >>> t (MonthAndDay 11 29) 2012 10 01 2013 10 15
+-- [DateSpan 2012-11-29..2013-11-28]
 --
 splitSpan :: Bool -> Interval -> DateSpan -> [DateSpan]
-splitSpan _ _ (DateSpan Nothing Nothing) = [DateSpan Nothing Nothing]
-splitSpan _ _ ds | isEmptySpan ds = []
-splitSpan _ _ ds@(DateSpan (Just s) (Just e)) | s == e = [ds]
-splitSpan _ NoInterval ds = [ds]
-splitSpan _ (Days n) ds = splitspan id addDays n                    ds
-splitSpan adjust (Weeks n)    ds = splitspan (if adjust then startofweek    else id) addDays (7*n)                ds
-splitSpan adjust (Months n)   ds = splitspan (if adjust then startofmonth   else id) addGregorianMonthsClip n     ds
-splitSpan adjust (Quarters n) ds = splitspan (if adjust then startofquarter else id) addGregorianMonthsClip (3*n) ds
-splitSpan adjust (Years n)    ds = splitspan (if adjust then startofyear    else id) addGregorianYearsClip n      ds
-splitSpan _ (DayOfMonth dom)  ds = splitspan (nthdayofmonthcontaining dom) (addGregorianMonthsToMonthday dom) 1 ds
-splitSpan _ (DayOfYear m n)   ds = splitspan (nthdayofyearcontaining m n) (addGregorianYearsClip) 1 ds
-splitSpan _ (WeekdayOfMonth n wd) ds = splitspan (nthweekdayofmonthcontaining n wd) advancemonths 1 ds
+splitSpan _      _                        (DateSpan Nothing Nothing) = [DateSpan Nothing Nothing]
+splitSpan _      _                        ds | isEmptySpan ds = []
+splitSpan _      _                        ds@(DateSpan (Just s) (Just e)) | s == e = [ds]
+splitSpan _      NoInterval               ds = [ds]
+splitSpan _      (Days n)                 ds = splitspan id addDays n ds
+splitSpan adjust (Weeks n)                ds = splitspan (if adjust then startofweek    else id) addDays                 (7*n) ds
+splitSpan adjust (Months n)               ds = splitspan (if adjust then startofmonth   else id) addGregorianMonthsClip  n     ds
+splitSpan adjust (Quarters n)             ds = splitspan (if adjust then startofquarter else id) addGregorianMonthsClip  (3*n) ds
+splitSpan adjust (Years n)                ds = splitspan (if adjust then startofyear    else id) addGregorianYearsClip   n     ds
+splitSpan adjust (NthWeekdayOfMonth n wd) ds = splitspan (if adjust then prevstart else nextstart) advancemonths          1     ds
   where
+    prevstart = prevNthWeekdayOfMonth n wd
+    nextstart = nextNthWeekdayOfMonth n wd
     advancemonths 0 = id
-    advancemonths w = advancetonthweekday n wd . startofmonth . addGregorianMonthsClip w
-splitSpan _ (DaysOfWeek [])         ds = [ds]
-splitSpan _ (DaysOfWeek days@(n:_)) ds = spansFromBoundaries e bdrys
+    advancemonths m = advanceToNthWeekday n wd . startofmonth . addGregorianMonthsClip m
+splitSpan _      (MonthDay dom)           ds = splitspan (nextnthdayofmonth dom) (addGregorianMonthsToMonthday dom) 1 ds
+splitSpan _      (MonthAndDay m d)        ds = splitspan (nextmonthandday m d)   (addGregorianYearsClip)            1 ds
+splitSpan _      (DaysOfWeek [])          ds = [ds]
+splitSpan _      (DaysOfWeek days@(n:_))  ds = spansFromBoundaries e bdrys
   where
     (s, e) = dateSpanSplitLimits (nthdayofweekcontaining n) nextday ds
     bdrys = concatMap (flip map starts . addDays) [0,7..]
@@ -260,16 +266,18 @@ addGregorianMonthsToMonthday dom n d =
   in fromGregorian y m dom
 
 -- Split the given span into exact spans using the provided helper functions:
--- 1. The start function is applied to the span's start date to get the first sub-span's start date.
--- 2. The addInterval function is used to calculate the subsequent spans' start dates,
--- possibly with stride increased by the mult multiplier.
--- It should adapt to spans of varying length, eg if splitting on "every 31st of month"
--- addInterval should adjust to 28/29/30 in short months but return to 31 in the long months.
+--
+-- 1. The start function is used to adjust the provided span's start date to get the first sub-span's start date.
+--
+-- 2. The next function is used to calculate subsequent sub-spans' start dates, possibly with stride increased by a multiplier.
+--    It should handle spans of varying length, eg when splitting on "every 31st of month",
+--    it adjusts to 28/29/30 in short months but returns to 31 in the long months.
+--
 splitspan :: (Day -> Day) -> (Integer -> Day -> Day) -> Int -> DateSpan -> [DateSpan]
-splitspan start addInterval mult ds = spansFromBoundaries e bdrys
+splitspan start next mult ds = spansFromBoundaries e bdrys
   where
-    (s, e) = dateSpanSplitLimits start (addInterval (toInteger mult)) ds
-    bdrys = mapM (addInterval . toInteger) [0,mult..] $ start s
+    (s, e) = dateSpanSplitLimits start (next (toInteger mult)) ds
+    bdrys = mapM (next . toInteger) [0,mult..] $ start s
 
 -- | Fill in missing start/end dates for calculating 'splitSpan'.
 dateSpanSplitLimits :: (Day -> Day) -> (Day -> Day) -> DateSpan -> (Day, Day)
@@ -620,7 +628,7 @@ startofquarter day = fromGregorian y (firstmonthofquarter m) 1
       firstmonthofquarter m2 = ((m2-1) `div` 3) * 3 + 1
 
 thisyear = startofyear
-prevyear = startofyear . addGregorianYearsClip (-1)
+-- prevyear = startofyear . addGregorianYearsClip (-1)
 nextyear = startofyear . addGregorianYearsClip 1
 startofyear day = fromGregorian y 1 1 where (y,_,_) = toGregorian day
 
@@ -632,65 +640,50 @@ intervalBoundaryBefore i d =
     (DateSpan (Just start) _:_) -> fromEFDay start
     _ -> d
 
--- | For given date d find year-long interval that starts on given
--- MM/DD of year and covers it.
--- The given MM and DD should be basically valid (1-12 & 1-31),
--- or an error is raised.
+-- | Find the next occurrence of the specified month and day of month, on or after the given date.
+-- The month should be 1-12 and the day of month should be 1-31, or an error will be raised.
 --
--- Examples: lets take 2017-11-22. Year-long intervals covering it that
--- starts before Nov 22 will start in 2017. However
--- intervals that start after Nov 23rd should start in 2016:
 -- >>> let wed22nd = fromGregorian 2017 11 22
--- >>> nthdayofyearcontaining 11 21 wed22nd
--- 2017-11-21
--- >>> nthdayofyearcontaining 11 22 wed22nd
+-- >>> nextmonthandday 11 21 wed22nd
+-- 2018-11-21
+-- >>> nextmonthandday 11 22 wed22nd
 -- 2017-11-22
--- >>> nthdayofyearcontaining 11 23 wed22nd
--- 2016-11-23
--- >>> nthdayofyearcontaining 12 02 wed22nd
--- 2016-12-02
--- >>> nthdayofyearcontaining 12 31 wed22nd
--- 2016-12-31
--- >>> nthdayofyearcontaining 1 1 wed22nd
--- 2017-01-01
-nthdayofyearcontaining :: Month -> MonthDay -> Day -> Day
-nthdayofyearcontaining m mdy date
+-- >>> nextmonthandday 11 23 wed22nd
+-- 2017-11-23
+nextmonthandday :: Month -> MonthDay -> Day -> Day
+nextmonthandday m n date
   -- PARTIAL:
-  | not (validMonth m)  = error' $ "nthdayofyearcontaining: invalid month "++show m
-  | not (validDay   mdy) = error' $ "nthdayofyearcontaining: invalid day "  ++show mdy
-  | mmddOfSameYear <= date = mmddOfSameYear
-  | otherwise = mmddOfPrevYear
-  where mmddOfSameYear = addDays (toInteger mdy-1) $ applyN (m-1) nextmonth s
-        mmddOfPrevYear = addDays (toInteger mdy-1) $ applyN (m-1) nextmonth $ prevyear s
-        s = startofyear date
+  | not (validMonth m) = error' $ "nextmonthandday: month should be 1..12, not "++show m
+  | not (validDay   n) = error' $ "nextmonthandday: day should be 1..31, not "  ++show n
+  | mdthisyear >= date = mdthisyear
+  | otherwise          = mdnextyear
+  where
+    s = startofyear date
+    advancetomonth = applyN (m-1) nextmonth
+    advancetoday = addDays (toInteger n-1)
+    mdthisyear = advancetoday $ advancetomonth s
+    mdnextyear = advancetoday $ advancetomonth $ nextyear s
 
--- | For a given date d find the month-long period that starts on day n of a month
--- that includes d. (It will begin on day n or either d's month or the previous month.)
--- The given day of month should be in the range 1-31, or an error will be raised.
+-- | Find the next occurrence of the specified day of month, on or after the given date.
+-- The day of month should be 1-31, or an error will be raised.
 --
--- Examples: lets take 2017-11-22. Month-long intervals covering it that
--- start on 1st-22nd of month will start in Nov. However
--- intervals that start on 23rd-30th of month should start in Oct:
 -- >>> let wed22nd = fromGregorian 2017 11 22
--- >>> nthdayofmonthcontaining 1 wed22nd
--- 2017-11-01
--- >>> nthdayofmonthcontaining 12 wed22nd
--- 2017-11-12
--- >>> nthdayofmonthcontaining 22 wed22nd
+-- >>> nextnthdayofmonth 21 wed22nd
+-- 2017-12-21
+-- >>> nextnthdayofmonth 22 wed22nd
 -- 2017-11-22
--- >>> nthdayofmonthcontaining 23 wed22nd
--- 2017-10-23
--- >>> nthdayofmonthcontaining 30 wed22nd
--- 2017-10-30
-nthdayofmonthcontaining :: MonthDay -> Day -> Day
-nthdayofmonthcontaining mdy date
+-- >>> nextnthdayofmonth 23 wed22nd
+-- 2017-11-23
+nextnthdayofmonth :: MonthDay -> Day -> Day
+nextnthdayofmonth n date
   -- PARTIAL:
-  | not (validDay mdy) = error' $ "nthdayofmonthcontaining: invalid day "  ++show mdy
-  | nthOfSameMonth <= date = nthOfSameMonth
-  | otherwise = nthOfPrevMonth
-  where nthOfSameMonth = nthdayofmonth mdy s
-        nthOfPrevMonth = nthdayofmonth mdy $ prevmonth s
-        s = startofmonth date
+  | not (validDay n)       = error' $ "nextnthdayofmonth: day should be 1..31, not "  ++show n
+  | nthofthismonth >= date = nthofthismonth
+  | otherwise              = nthofnextmonth
+  where
+    s = startofmonth date
+    nthofthismonth = nthdayofmonth n s
+    nthofnextmonth = nthdayofmonth n $ nextmonth s
 
 -- | For given date d find week-long interval that starts on nth day of week
 -- and covers it.
@@ -716,37 +709,66 @@ nthdayofweekcontaining n d | nthOfSameWeek <= d = nthOfSameWeek
           nthOfPrevWeek = addDays (toInteger n-1) $ prevweek s
           s = startofweek d
 
--- | For given date d find month-long interval that starts on nth weekday of month
--- and covers it.
---
--- Examples: 2017-11-22 is 3rd Wed of Nov. Month-long intervals that cover it and
--- start on 1st-4th Wed will start in Nov. However
--- intervals that start on 4th Thu or Fri or later should start in Oct:
--- >>> let wed22nd = fromGregorian 2017 11 22
--- >>> nthweekdayofmonthcontaining 1 3 wed22nd
--- 2017-11-01
--- >>> nthweekdayofmonthcontaining 3 2 wed22nd
--- 2017-11-21
--- >>> nthweekdayofmonthcontaining 4 3 wed22nd
--- 2017-11-22
--- >>> nthweekdayofmonthcontaining 4 4 wed22nd
--- 2017-10-26
--- >>> nthweekdayofmonthcontaining 4 5 wed22nd
--- 2017-10-27
-nthweekdayofmonthcontaining :: Int -> WeekDay -> Day -> Day
-nthweekdayofmonthcontaining n wd d | nthWeekdaySameMonth <= d  = nthWeekdaySameMonth
-                                   | otherwise = nthWeekdayPrevMonth
-    where nthWeekdaySameMonth = advancetonthweekday n wd $ startofmonth d
-          nthWeekdayPrevMonth = advancetonthweekday n wd $ prevmonth d
+-- -- | Find the next occurrence of some weekday, on or after the given date d.
+-- --
+-- -- >>> let wed22nd = fromGregorian 2017 11 22
+-- -- >>> nextnthdayofweek 1 wed22nd
+-- -- 2017-11-20
+-- -- >>> nextnthdayofweek 2 wed22nd
+-- -- 2017-11-21
+-- -- >>> nextnthdayofweek 3 wed22nd
+-- -- 2017-11-22
+-- -- >>> nextnthdayofweek 4 wed22nd
+-- -- 2017-11-16
+-- -- >>> nextnthdayofweek 5 wed22nd
+-- -- 2017-11-17
+-- nextdayofweek :: WeekDay -> Day -> Day
+-- nextdayofweek n d | nthOfSameWeek <= d = nthOfSameWeek
+--                            | otherwise = nthOfPrevWeek
+--     where nthOfSameWeek = addDays (toInteger n-1) s
+--           nthOfPrevWeek = addDays (toInteger n-1) $ prevweek s
+--           s = startofweek d
 
--- | Advance to nth weekday wd after given start day s
+-- | Find the next occurrence of some nth weekday of a month, on or after the given date d.
+--
+-- >>> let wed22nd = fromGregorian 2017 11 22
+-- >>> nextNthWeekdayOfMonth 3 3 wed22nd  -- next third wednesday
+-- 2017-12-20
+-- >>> nextNthWeekdayOfMonth 4 3 wed22nd  -- next fourth wednesday
+-- 2017-11-22
+-- >>> nextNthWeekdayOfMonth 5 3 wed22nd  -- next fifth wednesday
+-- 2017-11-29
+nextNthWeekdayOfMonth :: Int -> WeekDay -> Day -> Day
+nextNthWeekdayOfMonth n wd d
+  | nthweekdaythismonth >= d = nthweekdaythismonth
+  | otherwise                = nthweekdaynextmonth
+  where
+    nthweekdaythismonth = advanceToNthWeekday n wd $ startofmonth d
+    nthweekdaynextmonth = advanceToNthWeekday n wd $ nextmonth d
+
+-- | Find the previous occurrence of some nth weekday of a month, on or before the given date d.
+--
+-- >>> let wed22nd = fromGregorian 2017 11 22
+-- >>> prevNthWeekdayOfMonth 4 3 wed22nd
+-- 2017-11-22
+-- >>> prevNthWeekdayOfMonth 5 2 wed22nd
+-- 2017-10-31
+prevNthWeekdayOfMonth :: Int -> WeekDay -> Day -> Day
+prevNthWeekdayOfMonth n wd d
+  | nthweekdaythismonth <= d = nthweekdaythismonth
+  | otherwise                = nthweekdayprevmonth
+  where
+    nthweekdaythismonth = advanceToNthWeekday n wd $ startofmonth d
+    nthweekdayprevmonth = advanceToNthWeekday n wd $ prevmonth d
+
+-- | Advance to the nth occurrence of the given weekday, on or after the given date.
 -- Can call error.
-advancetonthweekday :: Int -> WeekDay -> Day -> Day
-advancetonthweekday n wd s =
+advanceToNthWeekday :: Int -> WeekDay -> Day -> Day
+advanceToNthWeekday n wd s =
   -- PARTIAL:
   maybe err (addWeeks (n-1)) $ firstMatch (>=s) $ iterate (addWeeks 1) $ firstweekday s
   where
-    err = error' "advancetonthweekday: should not happen"
+    err = error' "advanceToNthWeekday: should not happen"
     addWeeks k = addDays (7 * toInteger k)
     firstMatch p = headMay . dropWhile (not . p)
     firstweekday = addDays (toInteger wd-1) . startofweek
@@ -965,41 +987,41 @@ weekdaysp = fmap headErr . group . sort <$> sepBy1 weekday (string' ",")  -- PAR
 -- >>> p "every week to 2009"
 -- Right (Weeks 1,DateSpan ..2008-12-31)
 -- >>> p "every 2nd day of month"
--- Right (DayOfMonth 2,DateSpan ..)
+-- Right (MonthDay 2,DateSpan ..)
 -- >>> p "every 2nd day"
--- Right (DayOfMonth 2,DateSpan ..)
+-- Right (MonthDay 2,DateSpan ..)
 -- >>> p "every 2nd day 2009.."
--- Right (DayOfMonth 2,DateSpan 2009-01-01..)
+-- Right (MonthDay 2,DateSpan 2009-01-01..)
 -- >>> p "every 2nd day 2009-"
--- Right (DayOfMonth 2,DateSpan 2009-01-01..)
+-- Right (MonthDay 2,DateSpan 2009-01-01..)
 -- >>> p "every 29th Nov"
--- Right (DayOfYear 11 29,DateSpan ..)
+-- Right (MonthAndDay 11 29,DateSpan ..)
 -- >>> p "every 29th nov ..2009"
--- Right (DayOfYear 11 29,DateSpan ..2008-12-31)
+-- Right (MonthAndDay 11 29,DateSpan ..2008-12-31)
 -- >>> p "every nov 29th"
--- Right (DayOfYear 11 29,DateSpan ..)
+-- Right (MonthAndDay 11 29,DateSpan ..)
 -- >>> p "every Nov 29th 2009.."
--- Right (DayOfYear 11 29,DateSpan 2009-01-01..)
+-- Right (MonthAndDay 11 29,DateSpan 2009-01-01..)
 -- >>> p "every 11/29 from 2009"
--- Right (DayOfYear 11 29,DateSpan 2009-01-01..)
+-- Right (MonthAndDay 11 29,DateSpan 2009-01-01..)
 -- >>> p "every 11/29 since 2009"
--- Right (DayOfYear 11 29,DateSpan 2009-01-01..)
+-- Right (MonthAndDay 11 29,DateSpan 2009-01-01..)
 -- >>> p "every 2nd Thursday of month to 2009"
--- Right (WeekdayOfMonth 2 4,DateSpan ..2008-12-31)
+-- Right (NthWeekdayOfMonth 2 4,DateSpan ..2008-12-31)
 -- >>> p "every 1st monday of month to 2009"
--- Right (WeekdayOfMonth 1 1,DateSpan ..2008-12-31)
+-- Right (NthWeekdayOfMonth 1 1,DateSpan ..2008-12-31)
 -- >>> p "every tue"
 -- Right (DaysOfWeek [2],DateSpan ..)
 -- >>> p "every 2nd day of week"
 -- Right (DaysOfWeek [2],DateSpan ..)
 -- >>> p "every 2nd day of month"
--- Right (DayOfMonth 2,DateSpan ..)
+-- Right (MonthDay 2,DateSpan ..)
 -- >>> p "every 2nd day"
--- Right (DayOfMonth 2,DateSpan ..)
+-- Right (MonthDay 2,DateSpan ..)
 -- >>> p "every 2nd day 2009.."
--- Right (DayOfMonth 2,DateSpan 2009-01-01..)
+-- Right (MonthDay 2,DateSpan 2009-01-01..)
 -- >>> p "every 2nd day of month 2009.."
--- Right (DayOfMonth 2,DateSpan 2009-01-01..)
+-- Right (MonthDay 2,DateSpan 2009-01-01..)
 periodexprp :: Day -> TextParser m (Interval, DateSpan)
 periodexprp rdate = do
   skipNonNewlineSpaces
@@ -1028,9 +1050,9 @@ reportingintervalp = choice'
     , Months 2 <$ string' "bimonthly"
     , string' "every" *> skipNonNewlineSpaces *> choice'
         [ DaysOfWeek . pure <$> (nth <* skipNonNewlineSpaces <* string' "day" <* of_ "week")
-        , DayOfMonth <$> (nth <* skipNonNewlineSpaces <* string' "day" <* optOf_ "month")
-        , liftA2 WeekdayOfMonth nth $ skipNonNewlineSpaces *> weekday <* optOf_ "month"
-        , uncurry DayOfYear <$> (md <* optOf_ "year")
+        , MonthDay <$> (nth <* skipNonNewlineSpaces <* string' "day" <* optOf_ "month")
+        , liftA2 NthWeekdayOfMonth nth $ skipNonNewlineSpaces *> weekday <* optOf_ "month"
+        , uncurry MonthAndDay <$> (md <* optOf_ "year")
         , DaysOfWeek <$> weekdaysp
         , DaysOfWeek [1..5] <$ string' "weekday"
         , DaysOfWeek [6..7] <$ string' "weekendday"
@@ -1049,8 +1071,8 @@ reportingintervalp = choice'
     optOf_ period = optional . try $ of_ period
 
     nth = decimal <* choice (map string' ["st","nd","rd","th"])
-    d_o_y = runPermutation $ liftA2 DayOfYear (toPermutation $ (month <|> mon) <* skipNonNewlineSpaces)
-                                              (toPermutation $ nth <* skipNonNewlineSpaces)
+    d_o_y = runPermutation $ liftA2 MonthAndDay (toPermutation $ (month <|> mon) <* skipNonNewlineSpaces)
+                                                (toPermutation $ nth <* skipNonNewlineSpaces)
 
     -- Parse any of several variants of a basic interval, eg "daily", "every day", "every N days".
     tryinterval :: Text -> Text -> (Int -> Interval) -> TextParser m Interval

@@ -22,8 +22,19 @@ Internal/api/developer-ish changes in the hledger-lib (and hledger) packages.
 For user-visible changes, see the hledger package changelog.
 
 
-# f4e024e9c
+# 1.40 2024-09-09
 
+Breaking changes
+
+- Some constructors of the Interval type have been renamed for clarity.
+- Hledger.Read.CsvUtils has moved to Hledger.Write.Csv. (Henning Thielemann)
+- Tabular report rendering code has been added/reworked to allow new output formats and more reuse. (Henning Thielemann)
+
+Improvements
+
+- Added `journalDbg` debug output helper.
+
+- Allow doclayout 0.5.
 
 # 1.34 2024-06-01
 

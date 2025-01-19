@@ -521,25 +521,63 @@ Argument files are now superseded by..
 
 ## Config files
 
-hledger will read extra command line options from a `hledger.conf` config file.
-These will be inserted early in the command line, so your later options can override them if needed.
-The config file can contain general options (which will be used with all commands that support them), and command-specific options (or arguments).
-[hledger.conf.sample](https://github.com/simonmichael/hledger/blob/master/hledger.conf.sample) is an example,
-which you can install as, eg, `./hledger.conf` or `$HOME/.hledger.conf`.
+As of hledger 1.40, you can optionally save command line options (or arguments)
+to be used when running hledger commands, in a config file. Here's a small example:
 
-To be precise, hledger looks for `hledger.conf` in the current directory or above,
-or in your home directory (with a dotted name, `~/.hledger.conf`),
-or finally in your XDG config directory (`~/.config/hledger/hledger.conf`).
-Or you can select a particular config file by using the `--conf` option,
-or by adding a `hledger --conf` shebang line to a config file and executing it like a script (see the example file).
-You can inspect the finding and processing of config files with `--debug` or `--debug=8`.
+```conf
+# General options are listed first, one or more per line.
+# These will be used with all hledger commands that support them.
+--pretty
 
-If you want to run hledger without a config file, to ensure standard defaults and behaviour, use the `-n/--no-conf` flag.
-This is recommended when using hledger in scripts, and when troubleshooting problems.
+# Options following a `[COMMANDNAME]` heading are used with that hledger command only.
+[print]
+--explicit --show-costs
+```
 
-When both `--conf` and `--no-conf` options are used, the last (right-most) wins.
+To use a config file, specify it with the `--conf` option.
+Its options will be inserted near the start of your command line (so you can override them if needed).
 
-*(in master, experimental)*
+Or, you can set up an automatic config file that is used whenever you run hledger.
+This can be `hledger.conf` in the current directory or above,
+or `.hledger.conf` in your home directory (`~/.hledger.conf`),
+or `hledger.conf` in your XDG config directory (`~/.config/hledger/hledger.conf`).
+
+You can ignore config files by adding the `-n/--no-conf` flag.
+This is useful when using hledger in scripts, or when troubleshooting.
+(When both `--conf` and `--no-conf` options are used, the right-most wins.)
+To inspect the processing of config files, use `--debug` or `--debug=8`.
+
+Here is another example config file you could start with:
+<https://github.com/simonmichael/hledger/blob/master/hledger.conf.sample>
+
+Tips:
+
+Automatic config files are convenient, but have a cost: it's easy to change a report's behaviour,
+or break scripts/applications which use hledger, in unintended ways that will surprise you later.
+They change the nature of hledger somewhat, making it less transparent and predictable.
+If you decide to use one:
+
+- Be conservative about what you put in it. Try to consider the effect on all your reports.
+- Whenever a hledger command does not work as expected, try it again with `-n`.
+- If that helps, you can run it with `--debug` to see how a config file affected it.
+
+On unix machines, you can add a shebang line at the top of a config file, set executable permission on the file, and use it like a script.
+Eg (some operating systems need the `-S`, some don't):
+```
+#!/usr/bin/env -S hledger --conf
+```
+
+You can put not only options, but also arguments in a config file.
+This is probably more useful in special-purpose config files, not an automatic one.
+
+There's an exception to this: a config file can't provide the command argument, currently
+([#2231](https://github.com/simonmichael/hledger/issues/2231)).
+If you need that, you can do it in the shebang line instead. Eg:
+```
+#!/usr/bin/env -S hledger balance --conf
+```
+
+The config file feature has been added in hledger 1.40 and is considered *experimental*.
 
 # Output
 
@@ -4692,22 +4730,49 @@ More complex intervals can be specified using `-p/--period`, described below.
 
 ## Date adjustments
 
-A report interval other than daily may cause the report's start and end date
-to be adjusted, as follows:
+### Start date adjustment
 
-A "soft" start date -
-ie one which was not specified explicitly, but inferred, perhaps from the journal -
-will be adjusted earlier if needed to start on a natural subperiod boundary.
+If you let hledger infer a report's start date, it will adjust the date to the previous natural boundary of the report interval,
+for convenient periodic reports. (If you don't want that, specify a start date.)
 
-A "hard" start date - one specified explicitly, eg by `-b` - will not be adjusted (since hledger 1.29).
-This makes it possible to start the subperiods on any date.
-If you specify a start date, it's ideal to set it to a subperiod boundary
-(eg a monday for weekly reports, a first day of month for monthly reports..),
-as this will generate simple subperiod headings; otherwise they will be more verbose.
+For example, if the journal's first transaction is on january 10th,
 
-The end date - even if specified explicitly, eg by `-e` -
-will be adjusted later as needed to enclose a whole number of report intervals.
-Eg in a `--yearly` report, all subperiods will be one year long.
+- `hledger register` (no report interval) will start the report on january 10th.
+- `hledger register --monthly` will start the report on the previous month boundary, january 1st.
+- `hledger register --monthly --begin 1/5` will start the report on january 5th [1].
+
+Also if you are generating transactions or budget goals with [periodic transaction rules](#periodic-transactions),
+their start date may be adjusted in a similar way (in certain situations). <!-- TBD -->
+
+### End date adjustment
+
+A report's end date is always adjusted to include a whole number of intervals,
+so that the last subperiod has the same length as the others.
+
+For example, if the journal's last transaction is on february 20th,
+
+- `hledger register` will end the report on february 20th.
+- `hledger register --monthly` will end the report at the end of february.
+- `hledger register --monthly --end 2/14` also will end the report at the end of february.
+- `hledger register --monthly --begin 1/5 --end 2/14` will end the report on march 4th [1].
+
+[1] Since hledger 1.29.
+
+## Period headings
+
+With non-standard subperiods, hledger will show "STARTDATE..ENDDATE" headings.
+With standard subperiods (ie, starting on a natural interval boundary), you'll see more compact headings, which are usually preferable.
+(Though month names will be in english, currently.)
+
+So if you are specifying a start date and you want compact headings:
+choose a start of year for yearly reports,
+a start of quarter for quarterly reports,
+a start of month for monthly reports, etc.
+(Remember, you can write eg `-b 2024` or `1/1` as a shortcut for a start of year,
+or `2024-04` or `202404` or `Apr` for a start of month or quarter.)
+
+For weekly reports, choose a date that's a Monday.
+(You can try different dates until you see the short headings, or write eg `-b '3 weeks ago'`.)
 
 ## Period expressions
 
@@ -4796,7 +4861,7 @@ Monthly on a custom day:
 - `every Nth day [of month]` (`31st day` will be adjusted to each month's last day)
 - `every Nth WEEKDAYNAME [of month]`
 
-Yearly on a custom day:
+Yearly on a custom month and day:
 
 - `every MM/DD [of year]` (month number and day of month number)
 - `every MONTHNAME DDth [of year]` (full or three-letter english month name, case insensitive, and day of month number)
@@ -5184,7 +5249,7 @@ $ hledger print --forecast --today=2023/4/21
     expenses:rent                  $1000
 ```
 
-Here there are no ordinary transactions, so the forecasted transactions begin on the first occurence after today's date.
+Here there are no ordinary transactions, so the forecasted transactions begin on the first occurrence after today's date.
 (You won't normally use `--today`; it's just to make these examples reproducible.)
 
 ## Forecast reports
